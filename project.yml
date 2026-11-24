@@ -29,3 +29,14 @@ targets:
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"   # iPhone only
         GENERATE_INFOPLIST_FILE: NO
+# Explicit shared scheme so `xcodebuild -scheme WallE` works in CI
+# (without this, no shared scheme exists and the build can't find one).
+schemes:
+  WallE:
+    build:
+      targets:
+        WallE: all
+    run:
+      config: Release
+    archive:
+      config: Release
