@@ -11,6 +11,7 @@ struct ContentView: View {
 
     @AppStorage("claude_api_key") private var apiKey = ""
     @AppStorage("claude_model") private var model = "claude-sonnet-5-5"
+    @AppStorage("auto_scan_interval") private var scanInterval = 15.0
 
     @State private var urlString = "rtsp://172.20.10.2:554/"
     @State private var showSettings = false
@@ -146,7 +147,7 @@ struct ContentView: View {
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
-                DisclosureGroup("Settings — Claude API key", isExpanded: $showSettings) {
+                DisclosureGroup("Settings", isExpanded: $showSettings) {
                     VStack(spacing: 8) {
                         SecureField("Claude API key (sk-ant-…)", text: $apiKey)
                             .textFieldStyle(.roundedBorder)
@@ -156,7 +157,10 @@ struct ContentView: View {
                             .textFieldStyle(.roundedBorder)
                             .autocorrectionDisabled(true)
                             .textInputAutocapitalization(.never)
-                        Text("Stored only on this phone. Sent only to Anthropic's API.")
+                        Stepper("Auto-solve: capture every \(Int(scanInterval))s",
+                                value: $scanInterval, in: 2...120, step: 1)
+                            .font(.callout)
+                        Text("Stored only on this phone. Key is sent only to Anthropic's API.")
                             .font(.caption2)
                             .foregroundStyle(.secondary)
                             .frame(maxWidth: .infinity, alignment: .leading)
@@ -170,6 +174,7 @@ struct ContentView: View {
             .padding()
         }
         .onReceive(ticker) { now = $0 }
+        .onChange(of: scanInterval) { _ in autoSolver.reloadInterval() }
         .onChange(of: scenePhase) { phase in
             // Returning to the foreground (e.g. after an unlock) — restore the
             // camera stream and listening without the user having to tap anything.

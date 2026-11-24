@@ -59,14 +59,23 @@ final class AutoSolver: ObservableObject {
 
     // MARK: - Scanning
 
-    /// How often the auto-solver grabs a frame to check for a new problem.
-    private let scanInterval: TimeInterval = 15
+    /// How often to grab a frame to check for a new problem — set in the app's
+    /// Settings (UserDefaults key "auto_scan_interval"), defaulting to 15s.
+    private var currentInterval: TimeInterval {
+        let v = UserDefaults.standard.double(forKey: "auto_scan_interval")
+        return v >= 1 ? v : 15
+    }
 
     private func startScanTimer() {
         scanTimer?.invalidate()
-        scanTimer = Timer.scheduledTimer(withTimeInterval: scanInterval, repeats: true) { [weak self] _ in
+        scanTimer = Timer.scheduledTimer(withTimeInterval: currentInterval, repeats: true) { [weak self] _ in
             Task { @MainActor in await self?.scanTick() }
         }
+    }
+
+    /// Re-arm the timer with the latest interval (call when the setting changes).
+    func reloadInterval() {
+        if active { startScanTimer() }
     }
 
     private func scanTick() async {
