@@ -24,7 +24,7 @@ targets:
         NSLocalNetworkUsageDescription: Wall-E connects to your camera on your home network.
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.changeme.walle
+        PRODUCT_BUNDLE_IDENTIFIER: com.logan.walle
         MARKETING_VERSION: "0.1.0"
         CURRENT_PROJECT_VERSION: "1"
         TARGETED_DEVICE_FAMILY: "1"   # iPhone only
