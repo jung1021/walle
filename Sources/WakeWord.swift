@@ -26,6 +26,23 @@ final class WakeWord: ObservableObject {
     private var paused = false
     private var healthTimer: Timer?
 
+    init() {
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(handleInterruption),
+            name: AVAudioSession.interruptionNotification, object: nil)
+    }
+
+    /// A phone call or other audio interruption stops our engine; when it ends,
+    /// re-arm listening so it doesn't stay dead.
+    @objc nonisolated private func handleInterruption(_ note: Notification) {
+        guard let info = note.userInfo,
+              let raw = info[AVAudioSessionInterruptionTypeKey] as? UInt,
+              AVAudioSession.InterruptionType(rawValue: raw) == .ended else { return }
+        Task { @MainActor in
+            if self.isListening && !self.paused { self.beginSession() }
+        }
+    }
+
     // MARK: - Public control
 
     func start() {

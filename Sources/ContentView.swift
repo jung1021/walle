@@ -6,6 +6,8 @@ struct ContentView: View {
     @StateObject private var speaker = Speaker()
     @StateObject private var wakeWord = WakeWord()
 
+    @Environment(\.scenePhase) private var scenePhase
+
     @AppStorage("claude_api_key") private var apiKey = ""
     @AppStorage("claude_model") private var model = "claude-sonnet-5-5"
 
@@ -160,6 +162,15 @@ struct ContentView: View {
             .padding()
         }
         .onReceive(ticker) { now = $0 }
+        .onChange(of: scenePhase) { phase in
+            // Returning to the foreground (e.g. after an unlock) — restore the
+            // camera stream and listening without the user having to tap anything.
+            guard phase == .active else { return }
+            Task { @MainActor in
+                if engine.connectedSince != nil { await engine.ensurePlaying() }
+                if wakeWord.isListening { wakeWord.resume() }
+            }
+        }
         .onAppear {
             // The hands-free loop: wake → grab → ask Claude → speak → listen again.
             wakeWord.onWake = { [weak wakeWord, weak engine, weak brain, weak speaker] in
