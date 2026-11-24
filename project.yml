@@ -4,12 +4,18 @@ options:
   deploymentTarget:
     iOS: "15.0"
   createIntermediateGroups: true
+packages:
+  VLCKitSPM:
+    url: https://github.com/koombea/vlckit-spm
+    from: "3.6.0"
 targets:
   WallE:
     type: application
     platform: iOS
     sources:
       - Sources
+    dependencies:
+      - package: VLCKitSPM
     info:
       path: Sources/Info.plist
       properties:
@@ -18,19 +24,16 @@ targets:
         # Background audio keeps the app alive with the screen off (used in a later stage).
         UIBackgroundModes:
           - audio
-        # Permission prompts. iOS requires these strings or the app crashes when it
-        # touches the microphone / local network. Not accessed yet in Stage 1.
         NSMicrophoneUsageDescription: Wall-E listens for its wake word.
-        NSLocalNetworkUsageDescription: Wall-E connects to your camera on your home network.
+        NSLocalNetworkUsageDescription: Wall-E finds and streams your camera over your local network.
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.logan.walle
-        MARKETING_VERSION: "0.1.0"
-        CURRENT_PROJECT_VERSION: "1"
+        MARKETING_VERSION: "0.2.0"
+        CURRENT_PROJECT_VERSION: "2"
         TARGETED_DEVICE_FAMILY: "1"   # iPhone only
         GENERATE_INFOPLIST_FILE: NO
-# Explicit shared scheme so `xcodebuild -scheme WallE` works in CI
-# (without this, no shared scheme exists and the build can't find one).
+# Explicit shared scheme so `xcodebuild -scheme WallE` works in CI.
 schemes:
   WallE:
     build:
