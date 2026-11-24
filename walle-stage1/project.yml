@@ -1,6 +1,6 @@
 name: WallE
 options:
-  bundleIdPrefix: com.changeme
+  bundleIdPrefix: com.logan
   deploymentTarget:
     iOS: "15.0"
   createIntermediateGroups: true
