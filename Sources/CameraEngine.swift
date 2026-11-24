@@ -26,6 +26,7 @@ final class CameraEngine: ObservableObject {
         // Low latency + force RTSP over TCP (more reliable than UDP on WiFi).
         media.addOption(":network-caching=300")
         media.addOption(":rtsp-tcp")
+        media.addOption(":no-audio")   // don't play the camera's mic into our speech recognizer
         player.media = media
         player.play()
         if connectedSince == nil { connectedSince = Date() }
@@ -74,6 +75,18 @@ final class CameraEngine: ObservableObject {
     /// Button entry point — captures and updates `capturedImage`.
     func grabBestFrame(count: Int = 5) {
         Task { _ = await captureBestFrame(count: count) }
+    }
+
+    /// One quick, small snapshot — used by the auto-solver's scene-change scan.
+    func captureSingleFrame() async -> UIImage? {
+        guard player.isPlaying else { return nil }
+        let path = FileManager.default.temporaryDirectory
+            .appendingPathComponent("walle_scan.png").path
+        player.saveVideoSnapshot(at: path, withWidth: 320, andHeight: 0)
+        try? await Task.sleep(nanoseconds: 300_000_000)
+        let image = UIImage(contentsOfFile: path)
+        try? FileManager.default.removeItem(atPath: path)
+        return image
     }
 
     /// Grabs `count` snapshots a quarter-second apart and keeps the one whose

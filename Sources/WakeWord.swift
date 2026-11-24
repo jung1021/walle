@@ -16,8 +16,10 @@ final class WakeWord: ObservableObject {
     @Published var lastHeard = ""
     @Published var listeningSince: Date?
 
-    /// Called on the main actor each time the wake phrase is heard.
-    var onWake: (() -> Void)?
+    enum Command { case solve, stop }
+
+    /// Called on the main actor when a command phrase is heard.
+    var onCommand: ((Command) -> Void)?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
     private let audioEngine = AVAudioEngine()
@@ -184,12 +186,21 @@ final class WakeWord: ObservableObject {
             .replacingOccurrences(of: ",", with: " ")
             .replacingOccurrences(of: "'", with: "")   // let's -> lets, what's -> whats
         let hasName = norm.contains("wall")             // wall-e, wally, wallie, wall e …
+        guard hasName else { return }
+
+        // "Wall-E, stop" takes priority over a solve phrase.
+        if norm.contains("stop") {
+            paused = true
+            teardownSession()
+            onCommand?(.stop)
+            return
+        }
         let hasAction = WakeWord.actionPhrases.contains { norm.contains($0) }
-        if hasName && hasAction {
+        if hasAction {
             // Pause so nothing restarts mid-loop, then fire once.
             paused = true
             teardownSession()
-            onWake?()
+            onCommand?(.solve)
         }
     }
 

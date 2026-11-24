@@ -5,6 +5,7 @@ struct ContentView: View {
     @StateObject private var brain = Brain()
     @StateObject private var speaker = Speaker()
     @StateObject private var wakeWord = WakeWord()
+    @StateObject private var autoSolver = AutoSolver()
 
     @Environment(\.scenePhase) private var scenePhase
 
@@ -36,8 +37,14 @@ struct ContentView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
-                Text("Wall-E · Stage 5 — hands-free")
+                Text("Wall-E · auto-solve")
                     .font(.headline)
+
+                if autoSolver.active {
+                    Label("Auto-solving", systemImage: "arrow.triangle.2.circlepath")
+                        .font(.caption.bold())
+                        .foregroundStyle(.green)
+                }
 
                 ZStack {
                     Color.black
@@ -172,30 +179,13 @@ struct ContentView: View {
             }
         }
         .onAppear {
-            // The hands-free loop: wake → grab → ask Claude → speak → listen again.
-            wakeWord.onWake = { [weak wakeWord, weak engine, weak brain, weak speaker] in
-                Task { @MainActor in
-                    guard let wakeWord, let engine, let brain, let speaker else { return }
-                    // Whatever happens below — capture failure, API error, stuck
-                    // speech — listening ALWAYS comes back.
-                    defer { wakeWord.resume() }
-
-                    // If the stream stalled (e.g. screen was off), re-establish it.
-                    await engine.ensurePlaying()
-                    guard let image = await engine.captureBestFrame() else {
-                        await speaker.speakAndWait("I can't see the camera right now.")
-                        return
-                    }
-                    let key = UserDefaults.standard.string(forKey: "claude_api_key") ?? ""
-                    let mdl = UserDefaults.standard.string(forKey: "claude_model") ?? "claude-sonnet-5-5"
-                    await brain.solve(image: image, apiKey: key, model: mdl, prompt: prompt)
-
-                    // Speak the answer, or a SHORT spoken error (full detail stays
-                    // on screen in brain.error). Never read the raw API response aloud.
-                    let say = brain.answer.isEmpty
-                        ? "Sorry, I couldn't get an answer that time. Try again."
-                        : brain.answer
-                    await speaker.speakAndWait(say)
+            autoSolver.configure(engine: engine, brain: brain, speaker: speaker,
+                                 wakeWord: wakeWord, prompt: prompt)
+            // "Wall-E, solve this / let's do this" starts auto-solve; "Wall-E, stop" ends it.
+            wakeWord.onCommand = { [weak autoSolver] command in
+                switch command {
+                case .solve: autoSolver?.handleSolve()
+                case .stop:  autoSolver?.handleStop()
                 }
             }
         }
