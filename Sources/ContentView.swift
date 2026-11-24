@@ -3,6 +3,7 @@ import SwiftUI
 struct ContentView: View {
     @StateObject private var engine = CameraEngine()
     @StateObject private var brain = Brain()
+    @StateObject private var speaker = Speaker()
 
     // Stored on this phone only (UserDefaults). Not in the repo.
     @AppStorage("claude_api_key") private var apiKey = ""
@@ -12,16 +13,17 @@ struct ContentView: View {
     @State private var showSettings = false
 
     private let prompt = """
-    You are Wall-E, a small robot. This image is what your camera sees. \
-    If it shows a question, puzzle, or problem, solve it and give the answer \
-    clearly and briefly. Otherwise, briefly say what you see. Keep it short \
-    enough to read aloud.
+    You are Wall-E, a small robot assistant. The image is exactly what your \
+    camera sees right now. If it contains a problem to solve — a math problem, \
+    puzzle, question, or similar — solve it and state the answer clearly and \
+    briefly, suitable to be read aloud. If there is no problem to solve in the \
+    image, reply with exactly: "There is no problem to solve." Keep it short.
     """
 
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
-                Text("Wall-E · Stage 3 — the brain")
+                Text("Wall-E · Stage 4 — the voice")
                     .font(.headline)
 
                 ZStack {
@@ -63,7 +65,7 @@ struct ContentView: View {
                         }
                     } label: {
                         if brain.isThinking { ProgressView() }
-                        else { Label("Ask Claude", systemImage: "brain") }
+                        else { Label("Ask", systemImage: "brain") }
                     }
                     .buttonStyle(.borderedProminent)
                     .disabled(engine.capturedImage == nil || brain.isThinking || apiKey.isEmpty)
@@ -78,14 +80,21 @@ struct ContentView: View {
                     Image(uiImage: image)
                         .resizable()
                         .scaledToFit()
-                        .frame(maxHeight: 160)
+                        .frame(maxHeight: 150)
                         .clipShape(RoundedRectangle(cornerRadius: 8))
                 }
 
                 if !brain.answer.isEmpty {
-                    VStack(alignment: .leading, spacing: 4) {
+                    VStack(alignment: .leading, spacing: 6) {
                         Text("Wall-E says").font(.caption2).foregroundStyle(.tertiary)
                         Text(brain.answer).font(.body)
+                        Button {
+                            speaker.speak(brain.answer)
+                        } label: {
+                            Label("Speak again", systemImage: "speaker.wave.2.fill")
+                        }
+                        .buttonStyle(.bordered)
+                        .controlSize(.small)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
@@ -122,6 +131,10 @@ struct ContentView: View {
                 Spacer(minLength: 20)
             }
             .padding()
+        }
+        // Speak every new answer automatically through the Bluetooth speaker.
+        .onChange(of: brain.answer) { newValue in
+            if !newValue.isEmpty { speaker.speak(newValue) }
         }
     }
 }
