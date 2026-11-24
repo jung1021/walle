@@ -53,13 +53,19 @@ final class CameraEngine: ObservableObject {
 
     // MARK: - Frame capture (best of N)
 
+    /// Button entry point — captures and updates `capturedImage`.
+    func grabBestFrame(count: Int = 5) {
+        Task { _ = await captureBestFrame(count: count) }
+    }
+
     /// Grabs `count` snapshots a quarter-second apart and keeps the one whose
     /// PNG is largest — blurry frames compress smaller, so this favors the
-    /// sharpest frame. Good enough until Stage 3 adds a real sharpness metric.
-    func grabBestFrame(count: Int = 5) {
+    /// sharpest frame. Returns the chosen image (and sets `capturedImage`).
+    @discardableResult
+    func captureBestFrame(count: Int = 5) async -> UIImage? {
         guard player.isPlaying else {
             status = "Connect to the camera first."
-            return
+            return nil
         }
         status = "Grabbing \(count) frames…"
         let dir = FileManager.default.temporaryDirectory
@@ -67,26 +73,26 @@ final class CameraEngine: ObservableObject {
         for i in 0..<count {
             let path = dir.appendingPathComponent("walle_shot_\(i).png").path
             paths.append(path)
-            DispatchQueue.main.asyncAfter(deadline: .now() + Double(i) * 0.25) { [weak self] in
-                self?.player.saveVideoSnapshot(at: path, withWidth: 0, andHeight: 0)
-            }
+            player.saveVideoSnapshot(at: path, withWidth: 0, andHeight: 0)
+            try? await Task.sleep(nanoseconds: 250_000_000)   // 0.25s
         }
-        DispatchQueue.main.asyncAfter(deadline: .now() + Double(count) * 0.25 + 0.7) { [weak self] in
-            guard let self else { return }
-            let best = paths.compactMap { path -> (String, Int)? in
-                guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
-                      let size = attrs[.size] as? Int, size > 0 else { return nil }
-                return (path, size)
-            }.max(by: { $0.1 < $1.1 })
+        try? await Task.sleep(nanoseconds: 400_000_000)       // let the last write finish
 
-            if let path = best?.0, let image = UIImage(contentsOfFile: path) {
-                self.capturedImage = image
-                self.status = "Captured sharpest of \(count) frames."
-            } else {
-                self.status = "No frame captured — is the video actually playing?"
-            }
-            // tidy up
-            for p in paths { try? FileManager.default.removeItem(atPath: p) }
+        let best = paths.compactMap { path -> (String, Int)? in
+            guard let attrs = try? FileManager.default.attributesOfItem(atPath: path),
+                  let size = attrs[.size] as? Int, size > 0 else { return nil }
+            return (path, size)
+        }.max(by: { $0.1 < $1.1 })
+
+        var result: UIImage?
+        if let path = best?.0, let image = UIImage(contentsOfFile: path) {
+            capturedImage = image
+            result = image
+            status = "Captured sharpest of \(count) frames."
+        } else {
+            status = "No frame captured — is the video actually playing?"
         }
+        for p in paths { try? FileManager.default.removeItem(atPath: p) }
+        return result
     }
 }

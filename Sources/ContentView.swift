@@ -4,8 +4,8 @@ struct ContentView: View {
     @StateObject private var engine = CameraEngine()
     @StateObject private var brain = Brain()
     @StateObject private var speaker = Speaker()
+    @StateObject private var wakeWord = WakeWord()
 
-    // Stored on this phone only (UserDefaults). Not in the repo.
     @AppStorage("claude_api_key") private var apiKey = ""
     @AppStorage("claude_model") private var model = "claude-sonnet-5-5"
 
@@ -23,15 +23,39 @@ struct ContentView: View {
     var body: some View {
         ScrollView {
             VStack(spacing: 12) {
-                Text("Wall-E · Stage 4 — the voice")
+                Text("Wall-E · Stage 5 — hands-free")
                     .font(.headline)
 
                 ZStack {
                     Color.black
                     VLCPlayerView(player: engine.player)
                 }
-                .frame(height: 200)
+                .frame(height: 180)
                 .clipShape(RoundedRectangle(cornerRadius: 10))
+
+                // The main control: start/stop always-listening.
+                Button {
+                    if wakeWord.isListening { wakeWord.stop() }
+                    else { wakeWord.start() }
+                } label: {
+                    Label(wakeWord.isListening ? "Stop listening" : "Start listening",
+                          systemImage: wakeWord.isListening ? "ear.trianglebadge.exclamationmark" : "ear")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.borderedProminent)
+                .tint(wakeWord.isListening ? .red : .accentColor)
+
+                Text(wakeWord.status)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                if !wakeWord.lastHeard.isEmpty {
+                    Text("heard: \(wakeWord.lastHeard)")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
+                }
+
+                Divider()
 
                 HStack {
                     TextField("rtsp://…", text: $urlString)
@@ -52,22 +76,24 @@ struct ContentView: View {
                     .buttonStyle(.bordered)
                     .disabled(engine.isScanning)
 
-                    Button {
-                        engine.grabBestFrame()
-                    } label: {
+                    Button { engine.grabBestFrame() } label: {
                         Label("Grab", systemImage: "camera")
                     }
                     .buttonStyle(.bordered)
 
                     Button {
-                        if let image = engine.capturedImage {
-                            Task { await brain.solve(image: image, apiKey: apiKey, model: model, prompt: prompt) }
+                        Task {
+                            if let image = engine.capturedImage {
+                                await brain.solve(image: image, apiKey: apiKey, model: model, prompt: prompt)
+                                let say = brain.answer.isEmpty ? (brain.error ?? "") : brain.answer
+                                speaker.speak(say)
+                            }
                         }
                     } label: {
                         if brain.isThinking { ProgressView() }
                         else { Label("Ask", systemImage: "brain") }
                     }
-                    .buttonStyle(.borderedProminent)
+                    .buttonStyle(.bordered)
                     .disabled(engine.capturedImage == nil || brain.isThinking || apiKey.isEmpty)
                 }
 
@@ -76,25 +102,10 @@ struct ContentView: View {
                     .foregroundStyle(.secondary)
                     .multilineTextAlignment(.center)
 
-                if let image = engine.capturedImage {
-                    Image(uiImage: image)
-                        .resizable()
-                        .scaledToFit()
-                        .frame(maxHeight: 150)
-                        .clipShape(RoundedRectangle(cornerRadius: 8))
-                }
-
                 if !brain.answer.isEmpty {
-                    VStack(alignment: .leading, spacing: 6) {
+                    VStack(alignment: .leading, spacing: 4) {
                         Text("Wall-E says").font(.caption2).foregroundStyle(.tertiary)
                         Text(brain.answer).font(.body)
-                        Button {
-                            speaker.speak(brain.answer)
-                        } label: {
-                            Label("Speak again", systemImage: "speaker.wave.2.fill")
-                        }
-                        .buttonStyle(.bordered)
-                        .controlSize(.small)
                     }
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding()
@@ -103,9 +114,7 @@ struct ContentView: View {
                 }
 
                 if let err = brain.error {
-                    Text(err)
-                        .font(.caption)
-                        .foregroundStyle(.red)
+                    Text(err).font(.caption).foregroundStyle(.red)
                         .frame(maxWidth: .infinity, alignment: .leading)
                 }
 
@@ -132,9 +141,22 @@ struct ContentView: View {
             }
             .padding()
         }
-        // Speak every new answer automatically through the Bluetooth speaker.
-        .onChange(of: brain.answer) { newValue in
-            if !newValue.isEmpty { speaker.speak(newValue) }
+        .onAppear {
+            // The hands-free loop: wake → grab → ask Claude → speak → listen again.
+            wakeWord.onWake = { [weak wakeWord, weak engine, weak brain, weak speaker] in
+                Task { @MainActor in
+                    guard let wakeWord, let engine, let brain, let speaker else { return }
+                    guard let image = await engine.captureBestFrame() else {
+                        speaker.speak("I can't see the camera right now.") { wakeWord.resume() }
+                        return
+                    }
+                    let key = UserDefaults.standard.string(forKey: "claude_api_key") ?? ""
+                    let mdl = UserDefaults.standard.string(forKey: "claude_model") ?? "claude-sonnet-5-5"
+                    await brain.solve(image: image, apiKey: key, model: mdl, prompt: prompt)
+                    let say = brain.answer.isEmpty ? (brain.error ?? "Something went wrong.") : brain.answer
+                    speaker.speak(say) { wakeWord.resume() }
+                }
+            }
         }
     }
 }

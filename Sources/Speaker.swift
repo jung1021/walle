@@ -1,13 +1,21 @@
 import AVFoundation
 
-/// Speaks text aloud, routed to a connected Bluetooth speaker when present.
+/// Speaks text aloud, routed to a connected Bluetooth speaker when present,
+/// and calls an optional completion when it finishes (used to resume listening).
 @MainActor
-final class Speaker: ObservableObject {
+final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
     private let synthesizer = AVSpeechSynthesizer()
+    private var onFinish: (() -> Void)?
 
-    func speak(_ text: String) {
+    override init() {
+        super.init()
+        synthesizer.delegate = self
+    }
+
+    func speak(_ text: String, completion: (() -> Void)? = nil) {
         let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmed.isEmpty else { return }
+        guard !trimmed.isEmpty else { completion?(); return }
+        onFinish = completion
         activateSession()
         let utterance = AVSpeechUtterance(string: trimmed)
         utterance.voice = AVSpeechSynthesisVoice(language: "en-US")
@@ -19,7 +27,6 @@ final class Speaker: ObservableObject {
         synthesizer.stopSpeaking(at: .immediate)
     }
 
-    /// Playback category + Bluetooth A2DP so the voice goes to the BT speaker.
     private func activateSession() {
         let session = AVAudioSession.sharedInstance()
         do {
@@ -29,6 +36,24 @@ final class Speaker: ObservableObject {
             try session.setActive(true)
         } catch {
             // Fall through — the synthesizer will still try the default route.
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                                       didFinish utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            let finish = self.onFinish
+            self.onFinish = nil
+            finish?()
+        }
+    }
+
+    nonisolated func speechSynthesizer(_ synthesizer: AVSpeechSynthesizer,
+                                       didCancel utterance: AVSpeechUtterance) {
+        Task { @MainActor in
+            let finish = self.onFinish
+            self.onFinish = nil
+            finish?()
         }
     }
 }
