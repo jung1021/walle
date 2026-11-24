@@ -167,13 +167,25 @@ final class WakeWord: ObservableObject {
         status = "Listening — say “Wall-E, solve this.”"
     }
 
+    /// Trigger requires the name ("Wall-E", however Apple mishears it) AND any
+    /// one of these action phrases — in any order within the same transcript.
+    private static let actionPhrases = [
+        "solve this", "solve it", "solve the problem",
+        "lets do this", "do this", "lets do it",
+        "figure this out", "figure it out", "work this out",
+        "whats the answer", "answer this", "help me with this", "help with this"
+    ]
+
     private func handleTranscript(_ text: String) {
         lastHeard = text
         let norm = text.lowercased()
             .replacingOccurrences(of: "-", with: " ")
             .replacingOccurrences(of: ".", with: " ")
-        let hasWall = norm.contains("wall") || norm.contains("wally") || norm.contains("walle")
-        if hasWall && norm.contains("solve this") {
+            .replacingOccurrences(of: ",", with: " ")
+            .replacingOccurrences(of: "'", with: "")   // let's -> lets, what's -> whats
+        let hasName = norm.contains("wall")             // wall-e, wally, wallie, wall e …
+        let hasAction = WakeWord.actionPhrases.contains { norm.contains($0) }
+        if hasName && hasAction {
             // Pause so nothing restarts mid-loop, then fire once.
             paused = true
             teardownSession()
