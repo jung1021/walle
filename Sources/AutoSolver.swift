@@ -41,6 +41,7 @@ final class AutoSolver: ObservableObject {
         statusLine = "Auto-solving — say “Wall-E, stop” to end."
         lastSolvedSig = nil
         prevScanSig = nil
+        engine?.captureCount = 0   // count captures for this auto-solve run
         startScanTimer()
         Task { await solveNow(force: true) }   // solve what's in view right now
     }

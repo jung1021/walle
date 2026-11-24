@@ -11,6 +11,7 @@ final class CameraEngine: ObservableObject {
     @Published var isScanning = false
     @Published var capturedImage: UIImage?
     @Published var connectedSince: Date?
+    @Published var captureCount = 0
 
     private(set) var lastURL: String?
 
@@ -83,6 +84,7 @@ final class CameraEngine: ObservableObject {
         let path = FileManager.default.temporaryDirectory
             .appendingPathComponent("walle_scan.png").path
         player.saveVideoSnapshot(at: path, withWidth: 320, andHeight: 0)
+        captureCount += 1
         try? await Task.sleep(nanoseconds: 300_000_000)
         let image = UIImage(contentsOfFile: path)
         try? FileManager.default.removeItem(atPath: path)
@@ -99,6 +101,7 @@ final class CameraEngine: ObservableObject {
             return nil
         }
         status = "Grabbing \(count) frames…"
+        captureCount += 1
         let dir = FileManager.default.temporaryDirectory
         var paths: [String] = []
         for i in 0..<count {

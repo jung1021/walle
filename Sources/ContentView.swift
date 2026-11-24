@@ -68,6 +68,7 @@ struct ContentView: View {
                 HStack(spacing: 16) {
                     Label(elapsed(since: wakeWord.listeningSince), systemImage: "ear")
                     Label(elapsed(since: engine.connectedSince), systemImage: "video")
+                    Label("\(engine.captureCount)", systemImage: "camera")
                 }
                 .font(.caption.monospacedDigit())
                 .foregroundStyle(.secondary)
