@@ -1,0 +1,31 @@
+name: WallE
+options:
+  bundleIdPrefix: com.changeme
+  deploymentTarget:
+    iOS: "15.0"
+  createIntermediateGroups: true
+targets:
+  WallE:
+    type: application
+    platform: iOS
+    sources:
+      - Sources
+    info:
+      path: Sources/Info.plist
+      properties:
+        CFBundleDisplayName: Wall-E
+        UILaunchScreen: {}
+        # Background audio keeps the app alive with the screen off (used in a later stage).
+        UIBackgroundModes:
+          - audio
+        # Permission prompts. iOS requires these strings or the app crashes when it
+        # touches the microphone / local network. Not accessed yet in Stage 1.
+        NSMicrophoneUsageDescription: Wall-E listens for its wake word.
+        NSLocalNetworkUsageDescription: Wall-E connects to your camera on your home network.
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.changeme.walle
+        MARKETING_VERSION: "0.1.0"
+        CURRENT_PROJECT_VERSION: "1"
+        TARGETED_DEVICE_FAMILY: "1"   # iPhone only
+        GENERATE_INFOPLIST_FILE: NO
