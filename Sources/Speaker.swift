@@ -27,6 +27,17 @@ final class Speaker: NSObject, ObservableObject, AVSpeechSynthesizerDelegate {
         synthesizer.stopSpeaking(at: .immediate)
     }
 
+    /// Async variant that returns when speech finishes — with a 30s safety cap so
+    /// a stuck utterance can never hang the caller (and strand the listen loop).
+    func speakAndWait(_ text: String) async {
+        await withCheckedContinuation { (cont: CheckedContinuation<Void, Never>) in
+            var done = false
+            func finish() { if !done { done = true; cont.resume() } }
+            self.speak(text) { finish() }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 30) { finish() }
+        }
+    }
+
     private func activateSession() {
         let session = AVAudioSession.sharedInstance()
         do {

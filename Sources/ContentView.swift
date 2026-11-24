@@ -146,15 +146,24 @@ struct ContentView: View {
             wakeWord.onWake = { [weak wakeWord, weak engine, weak brain, weak speaker] in
                 Task { @MainActor in
                     guard let wakeWord, let engine, let brain, let speaker else { return }
+                    // Whatever happens below — capture failure, API error, stuck
+                    // speech — listening ALWAYS comes back.
+                    defer { wakeWord.resume() }
+
                     guard let image = await engine.captureBestFrame() else {
-                        speaker.speak("I can't see the camera right now.") { wakeWord.resume() }
+                        await speaker.speakAndWait("I can't see the camera right now.")
                         return
                     }
                     let key = UserDefaults.standard.string(forKey: "claude_api_key") ?? ""
                     let mdl = UserDefaults.standard.string(forKey: "claude_model") ?? "claude-sonnet-5-5"
                     await brain.solve(image: image, apiKey: key, model: mdl, prompt: prompt)
-                    let say = brain.answer.isEmpty ? (brain.error ?? "Something went wrong.") : brain.answer
-                    speaker.speak(say) { wakeWord.resume() }
+
+                    // Speak the answer, or a SHORT spoken error (full detail stays
+                    // on screen in brain.error). Never read the raw API response aloud.
+                    let say = brain.answer.isEmpty
+                        ? "Sorry, I couldn't get an answer that time. Try again."
+                        : brain.answer
+                    await speaker.speakAndWait(say)
                 }
             }
         }

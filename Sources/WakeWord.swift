@@ -4,8 +4,11 @@ import AVFoundation
 
 /// Always-listening wake-phrase detector built on Apple's on-device speech
 /// recognition. Transcribes continuously and fires `onWake` when it hears a
-/// phrase like "Wall-E, solve this". On-device sessions time out after ~1 min,
-/// so it restarts itself on a timer and whenever a task ends.
+/// phrase like "Wall-E, solve this".
+///
+/// Robustness: a health timer re-arms the recognizer within a few seconds of
+/// ANY failure (task ending, mic/session error, a stalled restart), so the app
+/// can never go permanently deaf while listening is on.
 @MainActor
 final class WakeWord: ObservableObject {
     @Published var isListening = false
@@ -20,7 +23,7 @@ final class WakeWord: ObservableObject {
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var paused = false
-    private var restartTimer: Timer?
+    private var healthTimer: Timer?
 
     // MARK: - Public control
 
@@ -29,6 +32,7 @@ final class WakeWord: ObservableObject {
             guard let self else { return }
             if granted {
                 self.isListening = true
+                self.startHealthTimer()
                 self.beginSession()
             } else {
                 self.status = "Microphone or speech permission was denied."
@@ -39,7 +43,7 @@ final class WakeWord: ObservableObject {
     func stop() {
         isListening = false
         paused = false
-        restartTimer?.invalidate(); restartTimer = nil
+        healthTimer?.invalidate(); healthTimer = nil
         teardownSession()
         status = "Wake word off"
     }
@@ -50,6 +54,8 @@ final class WakeWord: ObservableObject {
         teardownSession()
     }
 
+    /// Resume after the loop finishes. Even if this call fails to start cleanly,
+    /// the health timer will re-arm the recognizer within a few seconds.
     func resume() {
         guard isListening else { return }
         paused = false
@@ -62,6 +68,22 @@ final class WakeWord: ObservableObject {
         SFSpeechRecognizer.requestAuthorization { auth in
             AVAudioSession.sharedInstance().requestRecordPermission { micOK in
                 DispatchQueue.main.async { completion(auth == .authorized && micOK) }
+            }
+        }
+    }
+
+    // MARK: - Self-healing
+
+    /// Every few seconds, if we should be listening but the recognizer isn't
+    /// actually running, restart it. This recovers from every failure path.
+    private func startHealthTimer() {
+        healthTimer?.invalidate()
+        healthTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
+            Task { @MainActor in
+                guard let self, self.isListening, !self.paused else { return }
+                if self.task == nil || !self.audioEngine.isRunning {
+                    self.beginSession()
+                }
             }
         }
     }
@@ -82,8 +104,8 @@ final class WakeWord: ObservableObject {
                                     options: [.duckOthers, .allowBluetooth, .defaultToSpeaker])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
         } catch {
-            status = "Audio session error: \(error.localizedDescription)"
-            return
+            status = "Audio session error — retrying…"
+            return   // health timer will retry shortly
         }
 
         let req = SFSpeechAudioBufferRecognitionRequest()
@@ -103,8 +125,8 @@ final class WakeWord: ObservableObject {
         do {
             try audioEngine.start()
         } catch {
-            status = "Microphone error: \(error.localizedDescription)"
-            return
+            status = "Microphone error — retrying…"
+            return   // health timer will retry shortly
         }
 
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
@@ -115,20 +137,14 @@ final class WakeWord: ObservableObject {
             }
             if error != nil || (result?.isFinal ?? false) {
                 Task { @MainActor in
+                    // Drop the finished task so the health timer (or this) re-arms it.
+                    self.task = nil
                     if self.isListening && !self.paused { self.beginSession() }
                 }
             }
         }
 
         status = "Listening — say “Wall-E, solve this.”"
-
-        restartTimer?.invalidate()
-        restartTimer = Timer.scheduledTimer(withTimeInterval: 50, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                guard let self, self.isListening, !self.paused else { return }
-                self.beginSession()
-            }
-        }
     }
 
     private func handleTranscript(_ text: String) {
@@ -138,7 +154,7 @@ final class WakeWord: ObservableObject {
             .replacingOccurrences(of: ".", with: " ")
         let hasWall = norm.contains("wall") || norm.contains("wally") || norm.contains("walle")
         if hasWall && norm.contains("solve this") {
-            // Pause so the timer/task-end doesn't restart mid-loop, then fire once.
+            // Pause so nothing restarts mid-loop, then fire once.
             paused = true
             teardownSession()
             onWake?()
