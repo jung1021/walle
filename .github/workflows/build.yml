@@ -8,7 +8,7 @@ on:
 
 jobs:
   build:
-    runs-on: macos-14   # GitHub-hosted macOS machine with Xcode preinstalled
+    runs-on: macos-13   # Intel macOS runner (available on free-tier private repos)
 
     steps:
       - name: Check out the code
