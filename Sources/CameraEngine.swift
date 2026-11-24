@@ -10,6 +10,9 @@ final class CameraEngine: ObservableObject {
     @Published var status = "Idle"
     @Published var isScanning = false
     @Published var capturedImage: UIImage?
+    @Published var connectedSince: Date?
+
+    private(set) var lastURL: String?
 
     // MARK: - Streaming
 
@@ -18,18 +21,33 @@ final class CameraEngine: ObservableObject {
             status = "Invalid RTSP URL"
             return
         }
+        lastURL = urlString
         let media = VLCMedia(url: url)
         // Low latency + force RTSP over TCP (more reliable than UDP on WiFi).
         media.addOption(":network-caching=300")
         media.addOption(":rtsp-tcp")
         player.media = media
         player.play()
+        if connectedSince == nil { connectedSince = Date() }
         status = "Connecting to \(url.host ?? "camera")…"
     }
 
     func stop() {
         player.stop()
+        connectedSince = nil
         status = "Stopped"
+    }
+
+    /// If the stream stalled (e.g. the app was backgrounded with the screen off),
+    /// re-establish it before we try to grab a frame. Waits up to ~3s for video.
+    func ensurePlaying() async {
+        if player.isPlaying { return }
+        guard let url = lastURL else { return }
+        connect(urlString: url)
+        for _ in 0..<12 {
+            if player.isPlaying { return }
+            try? await Task.sleep(nanoseconds: 250_000_000)
+        }
     }
 
     // MARK: - Discovery

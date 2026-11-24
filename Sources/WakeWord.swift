@@ -14,6 +14,7 @@ final class WakeWord: ObservableObject {
     @Published var isListening = false
     @Published var status = "Wake word off"
     @Published var lastHeard = ""
+    @Published var listeningSince: Date?
 
     /// Called on the main actor each time the wake phrase is heard.
     var onWake: (() -> Void)?
@@ -32,6 +33,7 @@ final class WakeWord: ObservableObject {
             guard let self else { return }
             if granted {
                 self.isListening = true
+                self.listeningSince = Date()
                 self.startHealthTimer()
                 self.beginSession()
             } else {
@@ -43,6 +45,7 @@ final class WakeWord: ObservableObject {
     func stop() {
         isListening = false
         paused = false
+        listeningSince = nil
         healthTimer?.invalidate(); healthTimer = nil
         teardownSession()
         status = "Wake word off"

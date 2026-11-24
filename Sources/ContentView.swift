@@ -11,6 +11,17 @@ struct ContentView: View {
 
     @State private var urlString = "rtsp://172.20.10.2:554/"
     @State private var showSettings = false
+    @State private var now = Date()
+
+    private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    private func elapsed(since start: Date?) -> String {
+        guard let start else { return "—" }
+        let t = max(0, Int(now.timeIntervalSince(start)))
+        let h = t / 3600, m = (t % 3600) / 60, s = t % 60
+        return h > 0 ? String(format: "%d:%02d:%02d", h, m, s)
+                     : String(format: "%02d:%02d", m, s)
+    }
 
     private let prompt = """
     You are Wall-E, a small robot assistant. The image is exactly what your \
@@ -44,6 +55,13 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .tint(wakeWord.isListening ? .red : .accentColor)
+
+                HStack(spacing: 16) {
+                    Label(elapsed(since: wakeWord.listeningSince), systemImage: "ear")
+                    Label(elapsed(since: engine.connectedSince), systemImage: "video")
+                }
+                .font(.caption.monospacedDigit())
+                .foregroundStyle(.secondary)
 
                 Text(wakeWord.status)
                     .font(.caption)
@@ -141,6 +159,7 @@ struct ContentView: View {
             }
             .padding()
         }
+        .onReceive(ticker) { now = $0 }
         .onAppear {
             // The hands-free loop: wake → grab → ask Claude → speak → listen again.
             wakeWord.onWake = { [weak wakeWord, weak engine, weak brain, weak speaker] in
@@ -150,6 +169,8 @@ struct ContentView: View {
                     // speech — listening ALWAYS comes back.
                     defer { wakeWord.resume() }
 
+                    // If the stream stalled (e.g. screen was off), re-establish it.
+                    await engine.ensurePlaying()
                     guard let image = await engine.captureBestFrame() else {
                         await speaker.speakAndWait("I can't see the camera right now.")
                         return
