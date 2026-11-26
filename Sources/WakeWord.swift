@@ -29,9 +29,19 @@ final class WakeWord: ObservableObject {
     private var healthTimer: Timer?
 
     init() {
-        NotificationCenter.default.addObserver(
-            self, selector: #selector(handleInterruption),
-            name: AVAudioSession.interruptionNotification, object: nil)
+        let nc = NotificationCenter.default
+        nc.addObserver(self, selector: #selector(handleInterruption),
+                       name: AVAudioSession.interruptionNotification, object: nil)
+        nc.addObserver(self, selector: #selector(handleRouteChange),
+                       name: AVAudioSession.routeChangeNotification, object: nil)
+    }
+
+    /// A Bluetooth speaker connecting/disconnecting changes the audio route;
+    /// re-arm so we always record from the phone's own mic.
+    @objc nonisolated private func handleRouteChange(_ note: Notification) {
+        Task { @MainActor in
+            if self.isListening && !self.paused { self.beginSession() }
+        }
     }
 
     /// A phone call or other audio interruption stops our engine; when it ends,
@@ -122,9 +132,15 @@ final class WakeWord: ObservableObject {
 
         let session = AVAudioSession.sharedInstance()
         do {
+            // No .allowBluetooth: an A2DP speaker has no mic, so the headset
+            // profile would hijack the input route and break recording. Keep
+            // output on the phone and force the built-in mic for listening.
             try session.setCategory(.playAndRecord, mode: .measurement,
-                                    options: [.duckOthers, .allowBluetooth, .defaultToSpeaker])
+                                    options: [.duckOthers, .defaultToSpeaker])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
+            if let mic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
+                try? session.setPreferredInput(mic)
+            }
         } catch {
             status = "Audio session error — retrying…"
             return   // health timer will retry shortly

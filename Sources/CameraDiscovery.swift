@@ -7,7 +7,12 @@ import Network
 enum CameraDiscovery {
 
     static func scanForRTSP(port: UInt16 = 554, completion: @escaping ([String]) -> Void) {
-        let subnets = localSubnets()
+        var subnets = localSubnets()
+        // Always include the iPhone Personal Hotspot subnet (172.20.10.0/28).
+        // When the phone HOSTS the hotspot its interface isn't always readable,
+        // so enumeration can miss it — this guarantees we probe 172.20.10.x,
+        // where the camera usually lands.
+        subnets.append(([172, 20, 10, 1], [255, 255, 255, 240]))
         guard !subnets.isEmpty else { completion([]); return }
 
         // Build the full host list across every candidate subnet, de-duplicated.

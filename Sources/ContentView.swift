@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ContentView: View {
     @StateObject private var engine = CameraEngine()
@@ -16,8 +17,15 @@ struct ContentView: View {
     @State private var urlString = "rtsp://172.20.10.2:554/"
     @State private var showSettings = false
     @State private var now = Date()
+    @FocusState private var urlFocused: Bool
 
     private let ticker = Timer.publish(every: 1, on: .main, in: .common).autoconnect()
+
+    /// Light tap feedback + dismiss the keyboard, so buttons feel responsive.
+    private func tapFeedback() {
+        urlFocused = false
+        UIImpactFeedbackGenerator(style: .light).impactOccurred()
+    }
 
     private func elapsed(since start: Date?) -> String {
         guard let start else { return "—" }
@@ -56,6 +64,7 @@ struct ContentView: View {
 
                 // The main control: start/stop always-listening.
                 Button {
+                    tapFeedback()
                     if wakeWord.isListening { wakeWord.stop() }
                     else { wakeWord.start() }
                 } label: {
@@ -91,26 +100,37 @@ struct ContentView: View {
                         .textFieldStyle(.roundedBorder)
                         .autocorrectionDisabled(true)
                         .textInputAutocapitalization(.never)
-                    Button("Connect") { engine.connect(urlString: urlString) }
+                        .focused($urlFocused)
+                    Button("Connect") { tapFeedback(); engine.connect(urlString: urlString) }
                         .buttonStyle(.borderedProminent)
                 }
 
                 HStack {
                     Button {
+                        tapFeedback()
                         engine.findCamera { urlString = "rtsp://\($0):554/" }
                     } label: {
-                        if engine.isScanning { ProgressView() }
-                        else { Label("Find", systemImage: "wifi") }
+                        if engine.isScanning {
+                            HStack(spacing: 6) { ProgressView(); Text("Searching…") }
+                        } else {
+                            Label("Find", systemImage: "wifi")
+                        }
                     }
                     .buttonStyle(.bordered)
                     .disabled(engine.isScanning)
 
-                    Button { engine.grabBestFrame() } label: {
-                        Label("Grab", systemImage: "camera")
+                    Button {
+                        tapFeedback()
+                        engine.grabBestFrame()
+                    } label: {
+                        if engine.isCapturing { ProgressView() }
+                        else { Label("Grab", systemImage: "camera") }
                     }
                     .buttonStyle(.bordered)
+                    .disabled(engine.isCapturing)
 
                     Button {
+                        tapFeedback()
                         Task {
                             if let image = engine.capturedImage {
                                 await brain.solve(image: image, apiKey: apiKey, model: model, prompt: prompt)

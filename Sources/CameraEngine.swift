@@ -9,6 +9,7 @@ final class CameraEngine: ObservableObject {
 
     @Published var status = "Idle"
     @Published var isScanning = false
+    @Published var isCapturing = false
     @Published var capturedImage: UIImage?
     @Published var connectedSince: Date?
     @Published var captureCount = 0
@@ -102,6 +103,8 @@ final class CameraEngine: ObservableObject {
         }
         status = "Grabbing \(count) frames…"
         captureCount += 1
+        isCapturing = true
+        defer { isCapturing = false }
         let dir = FileManager.default.temporaryDirectory
         var paths: [String] = []
         for i in 0..<count {
