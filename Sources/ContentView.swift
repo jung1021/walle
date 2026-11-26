@@ -86,6 +86,17 @@ struct ContentView: View {
                 Text(wakeWord.status)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                if wakeWord.isListening {
+                    // Live proof the mic is hearing something, and which mic it is.
+                    HStack(spacing: 8) {
+                        Image(systemName: "mic.fill")
+                        ProgressView(value: wakeWord.micLevel)
+                            .frame(width: 110)
+                        Text(wakeWord.micName).lineLimit(1)
+                    }
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+                }
                 if !wakeWord.lastHeard.isEmpty {
                     Text("heard: \(wakeWord.lastHeard)")
                         .font(.caption2)

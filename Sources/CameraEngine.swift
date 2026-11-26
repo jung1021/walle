@@ -32,8 +32,27 @@ final class CameraEngine: ObservableObject {
         player.media = media
         player.play()
         if connectedSince == nil { connectedSince = Date() }
-        status = "Connecting to \(url.host ?? "camera")…"
+        let host = url.host ?? "camera"
+        status = "Connecting to \(host)…"
+
+        // Watch for the stream actually starting, so the status doesn't sit on
+        // "Connecting…" forever. A newer connect() cancels this watcher.
+        connectAttempt += 1
+        let attempt = connectAttempt
+        Task { @MainActor in
+            for _ in 0..<40 {                                   // up to ~10s
+                try? await Task.sleep(nanoseconds: 250_000_000)
+                if attempt != self.connectAttempt { return }
+                if self.player.isPlaying {
+                    self.status = "Connected to \(host)"
+                    return
+                }
+            }
+            self.status = "Couldn't connect to \(host) — check the address."
+        }
     }
+
+    private var connectAttempt = 0
 
     func stop() {
         player.stop()

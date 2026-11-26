@@ -3,18 +3,23 @@ import Speech
 import AVFoundation
 
 /// Always-listening wake-phrase detector built on Apple's on-device speech
-/// recognition. Transcribes continuously and fires `onWake` when it hears a
+/// recognition. Transcribes continuously and fires `onCommand` when it hears a
 /// phrase like "Wall-E, solve this".
 ///
-/// Robustness: a health timer re-arms the recognizer within a few seconds of
-/// ANY failure (task ending, mic/session error, a stalled restart), so the app
-/// can never go permanently deaf while listening is on.
+/// Robustness: every recognition session has a generation number, so callbacks
+/// from an old session can never disturb the current one, and a health timer
+/// re-arms the recognizer within a few seconds of any failure — including the
+/// microphone going silent.
 @MainActor
 final class WakeWord: ObservableObject {
     @Published var isListening = false
     @Published var status = "Wake word off"
     @Published var lastHeard = ""
     @Published var listeningSince: Date?
+    /// Which microphone iOS is actually recording from (shown for diagnosis).
+    @Published var micName = "—"
+    /// Live input level 0…1, so you can see whether the mic is hearing anything.
+    @Published var micLevel: Double = 0
 
     enum Command { case solve, stop }
 
@@ -22,11 +27,15 @@ final class WakeWord: ObservableObject {
     var onCommand: ((Command) -> Void)?
 
     private let recognizer = SFSpeechRecognizer(locale: Locale(identifier: "en-US"))
-    private let audioEngine = AVAudioEngine()
+    private var audioEngine: AVAudioEngine?
     private var request: SFSpeechAudioBufferRecognitionRequest?
     private var task: SFSpeechRecognitionTask?
     private var paused = false
     private var healthTimer: Timer?
+
+    private var generation = 0
+    private var sessionStartedAt = Date.distantPast
+    private var lastAudioAt = Date.distantPast
 
     init() {
         let nc = NotificationCenter.default
@@ -36,11 +45,16 @@ final class WakeWord: ObservableObject {
                        name: AVAudioSession.routeChangeNotification, object: nil)
     }
 
-    /// A Bluetooth speaker connecting/disconnecting changes the audio route;
-    /// re-arm so we always record from the phone's own mic.
+    /// Only a device physically appearing/disappearing (e.g. the Bluetooth
+    /// speaker) should re-arm the session. Our own category changes also post
+    /// route-change notifications, and reacting to those caused a restart loop.
     @objc nonisolated private func handleRouteChange(_ note: Notification) {
+        guard let raw = note.userInfo?[AVAudioSessionRouteChangeReasonKey] as? UInt,
+              let reason = AVAudioSession.RouteChangeReason(rawValue: raw),
+              reason == .newDeviceAvailable || reason == .oldDeviceUnavailable else { return }
         Task { @MainActor in
-            if self.isListening && !self.paused { self.beginSession() }
+            guard self.isListening, !self.paused else { return }
+            if Date().timeIntervalSince(self.sessionStartedAt) > 1.5 { self.beginSession() }
         }
     }
 
@@ -77,6 +91,7 @@ final class WakeWord: ObservableObject {
         listeningSince = nil
         healthTimer?.invalidate(); healthTimer = nil
         teardownSession()
+        micLevel = 0
         status = "Wake word off"
     }
 
@@ -107,15 +122,16 @@ final class WakeWord: ObservableObject {
     // MARK: - Self-healing
 
     /// Every few seconds, if we should be listening but the recognizer isn't
-    /// actually running, restart it. This recovers from every failure path.
+    /// running — or the mic has delivered no audio for a while — restart it.
     private func startHealthTimer() {
         healthTimer?.invalidate()
         healthTimer = Timer.scheduledTimer(withTimeInterval: 3, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 guard let self, self.isListening, !self.paused else { return }
-                if self.task == nil || !self.audioEngine.isRunning {
-                    self.beginSession()
-                }
+                let engineDead = self.task == nil || !(self.audioEngine?.isRunning ?? false)
+                let sessionAge = Date().timeIntervalSince(self.sessionStartedAt)
+                let micSilent = sessionAge > 5 && Date().timeIntervalSince(self.lastAudioAt) > 5
+                if engineDead || micSilent { self.beginSession() }
             }
         }
     }
@@ -129,14 +145,16 @@ final class WakeWord: ObservableObject {
             return
         }
         teardownSession()
+        generation += 1
+        let gen = generation
+        sessionStartedAt = Date()
 
         let session = AVAudioSession.sharedInstance()
         do {
-            // No .allowBluetooth: an A2DP speaker has no mic, so the headset
-            // profile would hijack the input route and break recording. Keep
-            // output on the phone and force the built-in mic for listening.
-            try session.setCategory(.playAndRecord, mode: .measurement,
-                                    options: [.duckOthers, .defaultToSpeaker])
+            // Record-only, and no Bluetooth option: an A2DP speaker has no mic,
+            // so letting Bluetooth near the input route breaks recording. Force
+            // the phone's own microphone.
+            try session.setCategory(.record, mode: .measurement, options: [])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             if let mic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
                 try? session.setPreferredInput(mic)
@@ -145,6 +163,7 @@ final class WakeWord: ObservableObject {
             status = "Audio session error — retrying…"
             return   // health timer will retry shortly
         }
+        micName = session.currentRoute.inputs.first?.portName ?? "no input"
 
         let req = SFSpeechAudioBufferRecognitionRequest()
         req.shouldReportPartialResults = true
@@ -153,36 +172,62 @@ final class WakeWord: ObservableObject {
         }
         request = req
 
-        let input = audioEngine.inputNode
+        // A fresh engine every session: a reused engine keeps the input format
+        // from the previous audio route, which goes stale when Bluetooth
+        // connects or the category changes, and then delivers no audio.
+        let engine = AVAudioEngine()
+        audioEngine = engine
+        let input = engine.inputNode
         let format = input.outputFormat(forBus: 0)
-        input.removeTap(onBus: 0)
-        input.installTap(onBus: 0, bufferSize: 1024, format: format) { buffer, _ in
-            req.append(buffer)
+        guard format.sampleRate > 0, format.channelCount > 0 else {
+            status = "Microphone not ready — retrying…"
+            return   // health timer will retry shortly
         }
-        audioEngine.prepare()
+
+        var bufferCount = 0
+        input.installTap(onBus: 0, bufferSize: 1024, format: format) { [weak self] buffer, _ in
+            req.append(buffer)
+            bufferCount += 1
+            guard bufferCount % 8 == 0 else { return }
+            // Peak level of this buffer, for the on-screen mic meter.
+            var peak: Float = 0
+            if let data = buffer.floatChannelData?[0] {
+                let n = Int(buffer.frameLength)
+                var i = 0
+                while i < n { peak = max(peak, abs(data[i])); i += 16 }
+            }
+            let level = Double(min(1, peak * 4))
+            Task { @MainActor in
+                guard let self, self.generation == gen else { return }
+                self.micLevel = level
+                self.lastAudioAt = Date()
+            }
+        }
+        engine.prepare()
         do {
-            try audioEngine.start()
+            try engine.start()
         } catch {
             status = "Microphone error — retrying…"
             return   // health timer will retry shortly
         }
+        lastAudioAt = Date()
 
         task = recognizer.recognitionTask(with: req) { [weak self] result, error in
-            guard let self else { return }
-            if let result = result {
-                let text = result.bestTranscription.formattedString
-                Task { @MainActor in self.handleTranscript(text) }
-            }
-            if error != nil || (result?.isFinal ?? false) {
-                Task { @MainActor in
-                    // Drop the finished task so the health timer (or this) re-arms it.
+            let text = result?.bestTranscription.formattedString
+            let ended = error != nil || (result?.isFinal ?? false)
+            Task { @MainActor in
+                // Ignore callbacks from a session that has since been replaced
+                // (cancelling an old task fires its handler with an error).
+                guard let self, self.generation == gen else { return }
+                if let text { self.handleTranscript(text) }
+                if ended {
                     self.task = nil
                     if self.isListening && !self.paused { self.beginSession() }
                 }
             }
         }
 
-        status = "Listening — say “Wall-E, solve this.”"
+        status = "Listening — say “Wall-E, let’s do this.”"
     }
 
     /// Trigger requires the name ("Wall-E", however Apple mishears it) AND any
@@ -201,6 +246,7 @@ final class WakeWord: ObservableObject {
             .replacingOccurrences(of: ".", with: " ")
             .replacingOccurrences(of: ",", with: " ")
             .replacingOccurrences(of: "'", with: "")   // let's -> lets, what's -> whats
+            .replacingOccurrences(of: "’", with: "")
         let hasName = norm.contains("wall")             // wall-e, wally, wallie, wall e …
         guard hasName else { return }
 
@@ -221,9 +267,13 @@ final class WakeWord: ObservableObject {
     }
 
     private func teardownSession() {
+        generation += 1            // invalidate callbacks from the old session
         task?.cancel(); task = nil
         request?.endAudio(); request = nil
-        audioEngine.inputNode.removeTap(onBus: 0)
-        if audioEngine.isRunning { audioEngine.stop() }
+        if let engine = audioEngine {
+            engine.inputNode.removeTap(onBus: 0)
+            if engine.isRunning { engine.stop() }
+        }
+        audioEngine = nil
     }
 }
