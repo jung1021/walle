@@ -93,6 +93,9 @@ final class WakeWord: ObservableObject {
         teardownSession()
         micLevel = 0
         status = "Wake word off"
+        // Hand the audio session back to plain playback so nothing else in the
+        // app (the video player) is left running under a recording session.
+        try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .default, options: [])
     }
 
     /// Pause while Wall-E is speaking so it doesn't transcribe its own voice.
@@ -154,7 +157,11 @@ final class WakeWord: ObservableObject {
             // Record-only, and no Bluetooth option: an A2DP speaker has no mic,
             // so letting Bluetooth near the input route breaks recording. Force
             // the phone's own microphone.
-            try session.setCategory(.record, mode: .measurement, options: [])
+            // (.playAndRecord rather than record-only: 6.5's record-only session
+            // left the app with no output route, and the video player stopped
+            // connecting under it.)
+            try session.setCategory(.playAndRecord, mode: .measurement,
+                                    options: [.duckOthers, .defaultToSpeaker])
             try session.setActive(true, options: .notifyOthersOnDeactivation)
             if let mic = session.availableInputs?.first(where: { $0.portType == .builtInMic }) {
                 try? session.setPreferredInput(mic)
