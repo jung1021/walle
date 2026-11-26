@@ -40,9 +40,13 @@ final class AutoSolver: ObservableObject {
     func handleSolve() {
         active = true
         statusLine = "Auto-solving — say “Wall-E, stop” to end."
-        lastSolvedSig = nil
-        engine?.captureCount = 0   // count captures for this auto-solve run
         startScanTimer()
+        // The wake word paused itself when it heard the command; turn it straight
+        // back on so commands are still heard while Wall-E looks and thinks.
+        wakeWord?.resume()
+        guard !busy else { return }            // already working on one
+        lastSolvedSig = nil
+        engine?.captureCount = 0               // count captures for this run
         Task { await solveNow(force: true) }   // solve what's in view right now
     }
 
@@ -107,18 +111,24 @@ final class AutoSolver: ObservableObject {
         await solveNow(force: false)
     }
 
-    private func solveNow(force: Bool) async {
-        guard let engine, let brain, let speaker, let wakeWord, !busy else { return }
-        busy = true
-        defer {
-            busy = false
-            wakeWord.resume()   // listening always comes back
-        }
+    /// Speak with the mic off (so Wall-E doesn't transcribe itself), then listen again.
+    private func say(_ text: String) async {
+        guard let speaker, let wakeWord else { return }
+        wakeWord.pause()
+        await speaker.speakAndWait(text)
+        wakeWord.resume()
+    }
 
-        wakeWord.pause()        // don't transcribe our own voice while solving
+    private func solveNow(force: Bool) async {
+        guard let engine, let brain, !busy else { return }
+        busy = true
+        defer { busy = false }
+
+        // Listening stays ON while capturing and while Claude thinks, so
+        // "Wall-E, stop" is heard. It is only off while Wall-E is talking.
         await engine.ensurePlaying()
         guard let image = await engine.captureBestFrame() else {
-            if force { await speaker.speakAndWait("I can't see the camera right now.") }
+            if force { await say("I can't see the camera right now.") }
             return
         }
         // Baseline for "has it changed?" — taken through the same quick-scan
@@ -133,17 +143,18 @@ final class AutoSolver: ObservableObject {
         let mdl = UserDefaults.standard.string(forKey: "claude_model") ?? "claude-sonnet-5-5"
         await brain.solve(image: image, apiKey: key, model: mdl, prompt: prompt)
 
+        guard active else { return }           // told to stop while thinking: stay quiet
+
         let answer = brain.answer
         let noProblem = answer.isEmpty || answer.lowercased().contains("no problem")
-        if force {
-            // First solve after the command always speaks (confirms it was heard).
-            await speaker.speakAndWait(answer.isEmpty
-                ? "Sorry, I couldn't get an answer. Try again."
-                : answer)
-        } else if !noProblem {
-            await speaker.speakAndWait(answer)
+        if !noProblem {
+            // Claude confirmed there is a problem: announce it, then give the answer.
+            await say("I see a problem to solve. " + answer)
+        } else if force {
+            // The first look after a command always answers, so you know it heard you.
+            await say(answer.isEmpty ? "Sorry, I couldn't get an answer. Try again." : answer)
         }
-        // Auto-detected scene with no problem → stay silent.
+        // A new view with no problem, found while scanning: stay silent.
         if active { statusLine = "Auto-solving — watching for a new problem." }
     }
 }
