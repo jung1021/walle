@@ -53,6 +53,10 @@ struct ContentView: View {
                     Label("Auto-solving", systemImage: "arrow.triangle.2.circlepath")
                         .font(.caption.bold())
                         .foregroundStyle(.green)
+                    Text(autoSolver.statusLine)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                        .multilineTextAlignment(.center)
                 }
 
                 ZStack {

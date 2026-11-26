@@ -15,14 +15,15 @@ final class AutoSolver: ObservableObject {
     private weak var wakeWord: WakeWord?
     private var prompt = ""
 
-    // Tunable: how different a frame must be to count as a new problem, and how
-    // similar two scans must be to count as "settled" (robot stopped moving).
-    private let newThreshold = 0.08
-    private let stableThreshold = 0.05
+    // Tunable (see ImageSignature.changeScore): how much the most-changed part
+    // of the picture must differ from the last solved frame to count as a new
+    // problem, and how alike two frames taken a moment apart must be to count
+    // as "settled" (nothing moving, nobody mid-typing).
+    private let newThreshold = 0.04
+    private let stableThreshold = 0.04
 
     private var busy = false
     private var lastSolvedSig: [UInt8]?
-    private var prevScanSig: [UInt8]?
     private var scanTimer: Timer?
 
     func configure(engine: CameraEngine, brain: Brain, speaker: Speaker,
@@ -40,7 +41,6 @@ final class AutoSolver: ObservableObject {
         active = true
         statusLine = "Auto-solving — say “Wall-E, stop” to end."
         lastSolvedSig = nil
-        prevScanSig = nil
         engine?.captureCount = 0   // count captures for this auto-solve run
         startScanTimer()
         Task { await solveNow(force: true) }   // solve what's in view right now
@@ -81,13 +81,30 @@ final class AutoSolver: ObservableObject {
     private func scanTick() async {
         guard active, !busy, let engine else { return }
         guard let frame = await engine.captureSingleFrame(),
-              let sig = ImageSignature.make(frame) else { return }
-        let stable = prevScanSig.map { ImageSignature.difference($0, sig) < stableThreshold } ?? false
-        let isNew = lastSolvedSig.map { ImageSignature.difference($0, sig) > newThreshold } ?? true
-        prevScanSig = sig
-        if stable && isNew && !busy {
-            await solveNow(force: false)
+              let sig = ImageSignature.make(frame) else {
+            statusLine = "Auto-solving — couldn't grab a frame."
+            return
         }
+        // 1. Has anything changed since the frame we last solved?
+        let change = lastSolvedSig.map { ImageSignature.changeScore($0, sig) } ?? 1.0
+        guard change > newThreshold else {
+            statusLine = String(format: "Auto-solving — same view (change %.0f%%, needs %.0f%%)",
+                                change * 100, newThreshold * 100)
+            return
+        }
+        // 2. Is the view holding still? Compare with a second frame a moment later.
+        try? await Task.sleep(nanoseconds: 700_000_000)
+        guard active, !busy,
+              let frame2 = await engine.captureSingleFrame(),
+              let sig2 = ImageSignature.make(frame2) else { return }
+        let motion = ImageSignature.changeScore(sig, sig2)
+        guard motion < stableThreshold else {
+            statusLine = String(format: "Auto-solving — view still moving (%.0f%%), waiting",
+                                motion * 100)
+            return
+        }
+        statusLine = String(format: "Auto-solving — new view (change %.0f%%), solving…", change * 100)
+        await solveNow(force: false)
     }
 
     private func solveNow(force: Bool) async {
@@ -104,7 +121,13 @@ final class AutoSolver: ObservableObject {
             if force { await speaker.speakAndWait("I can't see the camera right now.") }
             return
         }
-        lastSolvedSig = ImageSignature.make(image)
+        // Baseline for "has it changed?" — taken through the same quick-scan
+        // path the later comparisons use, so the two are like for like.
+        if let base = await engine.captureSingleFrame() {
+            lastSolvedSig = ImageSignature.make(base)
+        } else {
+            lastSolvedSig = ImageSignature.make(image)
+        }
 
         let key = UserDefaults.standard.string(forKey: "claude_api_key") ?? ""
         let mdl = UserDefaults.standard.string(forKey: "claude_model") ?? "claude-sonnet-5-5"
@@ -121,5 +144,6 @@ final class AutoSolver: ObservableObject {
             await speaker.speakAndWait(answer)
         }
         // Auto-detected scene with no problem → stay silent.
+        if active { statusLine = "Auto-solving — watching for a new problem." }
     }
 }
